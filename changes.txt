@@ -1,0 +1,374 @@
+import { useState, useEffect, use } from "react";
+import {
+  allocateResource,
+  updateResource,
+  deleteResource,
+  updateResourceStatus,
+  getAllResources,
+  createInfrastructure,
+  getAllInfrastructure,
+  deleteInfrastructure,
+} from "../api/resourceApi";
+
+import Loading from "../components/Loading";
+import Alert from "../components/Alert";
+import { RequiredPermission } from "../components/PermissionGate";
+
+export default function ResourcesPage() {
+
+  const [activeTab, setActiveTab] = useState("resources");
+  const [resources, setResources] = useState([]);
+  const [infrastructure, setInfrastructure] = useState([]);
+
+  const [selected, setSelected] = useState({});
+  const [mode, setMode] = useState("");
+  const [section, setSection] = useState("");
+  const [showModal, setShowModal] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const clearMessages = () => { setError(""); setSuccess(""); };
+
+  // ✅ Load Infrastructure
+  useEffect(() => {
+    if (activeTab === "infrastructure") loadInfra();
+  }, [activeTab]);
+
+  useEffect(()=>{
+    if (activeTab === "resources") {
+        loadResources();
+    }
+  }, [activeTab]);
+
+
+  const loadResources = async () => {
+    try {
+      setLoading(true);
+      const data = await getAllResources();
+      setResources(Array.isArray(data) ? data : []);
+    } catch {
+      setError("Failed to load resources");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadInfra = async () => {
+    try {
+      setLoading(true);
+      const data = await getAllInfrastructure();
+      setInfrastructure(Array.isArray(data) ? data : []);
+    } catch {
+      setError("Failed to load infrastructure");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ OPEN MODAL
+  const openModal = (item, mode, section) => {
+    setSelected(item || {});
+    setMode(mode);
+    setSection(section);
+    setShowModal(true);
+  };
+
+  // ✅ SAVE (ADD / EDIT)
+  const handleSave = async () => {
+    try {
+      setLoading(true);
+      clearMessages();
+
+      if (section === "resource") {
+        if (mode === "add") {
+          await allocateResource(selected);
+          setResources([...resources, selected]);
+          setSuccess("Resource added ✅");
+        } else if (mode === "edit") {
+          await updateResource(selected.id, selected);
+          setResources(resources.map(r => r.id === selected.id ? selected : r));
+          setSuccess("Resource updated ✅");
+        }
+      } else {
+        if (mode === "add") {
+          await createInfrastructure(selected);
+          await loadInfra();
+          setSuccess("Infrastructure added ✅");
+        }
+      }
+
+    } catch {
+      setError("Operation failed ❌");
+    } finally {
+      setLoading(false);
+      setShowModal(false);
+    }
+  };
+
+  // ✅ DELETE
+  const handleDelete = async () => {
+    try {
+      setLoading(true);
+
+      if (section === "resource") {
+        await deleteResource(selected.id);
+        setResources(resources.filter(r => r.id !== selected.id));
+      } else {
+        await deleteInfrastructure(selected.id);
+        await loadInfra();
+      }
+
+      setSuccess("Deleted successfully ✅");
+
+    } catch {
+      setError("Delete failed ❌");
+    } finally {
+      setLoading(false);
+      setShowModal(false);
+    }
+  };
+
+  // ✅ STATUS UPDATE
+  const handleStatus = async (item) => {
+    try {
+      await updateResourceStatus(item.id, "Updated");
+      setSuccess("Status updated ✅");
+    } catch {
+      setError("Status update failed ❌");
+    }
+  };
+
+  return (
+    <RequiredPermission authority="PROGRAM_MANAGER">
+
+      <div>
+
+        <h4 className="fw-bold text-success mb-3">
+          Resource & Infrastructure
+        </h4>
+
+        {error && <Alert message={error} type="danger" />}
+        {success && <Alert message={success} type="success" />}
+        {loading && <Loading />}
+
+        {/* ✅ Tabs */}
+        <ul className="nav nav-tabs mb-4">
+          <li>
+            <button
+              className={`nav-link ${activeTab === "resources" ? "active" : ""}`}
+              onClick={() => setActiveTab("resources")}
+            >
+              Resources
+            </button>
+          </li>
+          <li>
+            <button
+              className={`nav-link ${activeTab === "infrastructure" ? "active" : ""}`}
+              onClick={() => setActiveTab("infrastructure")}
+            >
+              Infrastructure
+            </button>
+          </li>
+        </ul>
+
+        {/* ✅ RESOURCE TABLE */}
+        {activeTab === "resources" && (
+          <>
+            <button
+              className="btn btn-success mb-3"
+              onClick={() => openModal({}, "add", "resource")}
+            >
+              + Add Resource
+            </button>
+
+            <table className="table table-dark table-hover">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Project</th>
+                  <th>Type</th>
+                  <th>Quantity</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {resources.map(r => (
+                  <tr key={r.id}>
+                    <td>{r.id}</td>
+                    <td>{r.projectId}</td>
+                    <td>{r.type}</td>
+                    <td>{r.quantity}</td>
+
+                    <td>
+                      <button className="btn btn-sm btn-info me-1"
+                        onClick={() => openModal(r, "view", "resource")}>
+                        View
+                      </button>
+
+                      <button className="btn btn-sm btn-warning me-1"
+                        onClick={() => openModal(r, "edit", "resource")}>
+                        Edit
+                      </button>
+
+                      <button className="btn btn-sm btn-secondary me-1"
+                        onClick={() => handleStatus(r)}>
+                        Status
+                      </button>
+
+                      <button className="btn btn-sm btn-danger"
+                        onClick={() => openModal(r, "delete", "resource")}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* ✅ INFRASTRUCTURE TABLE */}
+        {activeTab === "infrastructure" && (
+          <>
+            <button
+              className="btn btn-success mb-3"
+              onClick={() => openModal({}, "add", "infra")}
+            >
+              + Add Infrastructure
+            </button>
+
+            <table className="table table-dark table-hover">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Location</th>
+                  <th>Capacity</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {infrastructure.map(i => (
+                  <tr key={i.id}>
+                    <td>{i.id}</td>
+                    <td>{i.type}</td>
+                    <td>{i.location}</td>
+                    <td>{i.capacity}</td>
+
+                    <td>
+                      <button className="btn btn-sm btn-info me-1"
+                        onClick={() => openModal(i, "view", "infra")}>
+                        View
+                      </button>
+
+                      <button className="btn btn-sm btn-danger"
+                        onClick={() => openModal(i, "delete", "infra")}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* ✅ MODAL */}
+        {showModal && (
+          <>
+            <div className="modal-backdrop fade show"></div>
+
+            <div className="modal d-block">
+              <div className="modal-dialog">
+                <div className="modal-content bg-dark text-white">
+
+                  <div className="modal-header">
+                    <h5 className="text-capitalize">{mode} {section}</h5>
+                    <button
+                      className="btn-close btn-close-white"
+                      onClick={() => setShowModal(false)}
+                    ></button>
+                  </div>
+
+                  <div className="modal-body">
+
+                    {mode === "delete" ? (
+                      <p>Are you sure you want to delete this {section}?</p>
+                    ) : (
+                      <>
+                        <input className="form-control mb-2"
+                          placeholder="Project ID"
+                          value={selected.projectId || ""}
+                          onChange={(e) =>
+                            setSelected({ ...selected, projectId: e.target.value })}
+                        />
+
+                        <input className="form-control mb-2"
+                          placeholder="Type"
+                          value={selected.type || ""}
+                          onChange={(e) =>
+                            setSelected({ ...selected, type: e.target.value })}
+                        />
+
+                        {section === "resource" && (
+                          <input className="form-control"
+                            placeholder="Quantity"
+                            value={selected.quantity || ""}
+                            onChange={(e) =>
+                              setSelected({ ...selected, quantity: e.target.value })}
+                          />
+                        )}
+
+                        {section === "infra" && (
+                          <>
+                            <input className="form-control mb-2"
+                              placeholder="Location"
+                              value={selected.location || ""}
+                              onChange={(e) =>
+                                setSelected({ ...selected, location: e.target.value })}
+                            />
+
+                            <input className="form-control"
+                              placeholder="Capacity"
+                              value={selected.capacity || ""}
+                              onChange={(e) =>
+                                setSelected({ ...selected, capacity: e.target.value })}
+                            />
+                          </>
+                        )}
+                      </>
+                    )}
+
+                  </div>
+
+                  <div className="modal-footer">
+                    <button className="btn btn-secondary"
+                      onClick={() => setShowModal(false)}>
+                      Cancel
+                    </button>
+
+                    {mode === "delete" ? (
+                      <button className="btn btn-danger" onClick={handleDelete}>
+                        Delete
+                      </button>
+                    ) : mode !== "view" && (
+                      <button className="btn btn-success" onClick={handleSave}>
+                        Save
+                      </button>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+      </div>
+    </RequiredPermission>
+  );
+}
