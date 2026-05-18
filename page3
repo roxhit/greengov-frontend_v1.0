@@ -1,0 +1,297 @@
+import { useState, useEffect } from "react";
+import * as api from "../api/resourceApi";
+import { fetchAllProjects } from "../api/projectApi";
+
+const Toast = ({ msg, type }) =>
+  msg ? (
+    <div className={`position-fixed alert alert-${type} shadow`}
+      style={{ top: 20, right: 20, minWidth: 280, maxWidth: 400, zIndex: 9999, borderRadius: 8 }}>
+      {msg}
+    </div>
+  ) : null;
+
+const Field = ({ label, value }) => (
+  <div className="row mb-2">
+    <div className="col-5 text-muted">{label}</div>
+    <div className="col-7 fw-semibold">{value}</div>
+  </div>
+);
+
+const ProgressRow = ({ label, value, total, colorClass, textClass }) => (
+  <>
+    <div className={`d-flex justify-content-between ${textClass ?? ""} mb-1`}>
+      <span>{label}</span><strong>{value}</strong>
+    </div>
+    {total != null && (
+      <div className="progress mt-2" style={{ height: 6 }}>
+        <div className={`progress-bar ${colorClass}`} style={{ width: `${(value / total) * 100}%` }} />
+      </div>
+    )}
+  </>
+);
+
+const statusClass = (s) =>
+  s === "AVAILABLE" ? "bg-primary" : s === "ACTIVE" || s === "ALLOCATED" ? "bg-success" : "bg-secondary";
+
+export default function ResourcesPage() {
+  const [tab, setTab] = useState("resources");
+  const [resources, setResources] = useState([]);
+  const [infra, setInfra] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [mode, setMode] = useState("");
+  const [section, setSection] = useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const isRes = section === "resource";
+
+  useEffect(() => { fetchAllProjects().then(setProjects); }, []);
+  useEffect(() => { tab === "resources" ? loadResources() : loadInfra(); }, [tab]);
+  useEffect(() => {
+    if (error || success) {
+      const t = setTimeout(() => { setError(""); setSuccess(""); }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [error, success]);
+
+  const loadResources = async () => setResources((await api.getAllResources()).content || []);
+  const loadInfra = async () => setInfra((await api.getAllInfrastructure()).content || []);
+  const reload = () => (isRes ? loadResources() : loadInfra());
+  const set = (patch) => setSelected((s) => ({ ...s, ...patch }));
+
+  const openModal = async (item = {}, m, tabName) => {
+    setMode(m);
+    setSection(tabName === "resources" ? "resource" : "infra");
+    setShowModal(true);
+    try {
+      setSelected(m === "view" && tabName === "resources"
+        ? await api.getResourceById(item.resourceId)
+        : item);
+    } catch { setError("Failed to fetch details ❌"); }
+  };
+
+  const handleSave = async () => {
+    try {
+      isRes
+        ? await api.createResource({ projectId: +selected.projectId, resourceName: selected.resourceName, type: selected.type, totalQuantity: +selected.totalQuantity })
+        : await api.createInfrastructure({ projectId: +selected.projectId, infrastructureName: selected.infrastructureName, type: selected.type, location: selected.location, capacity: +selected.capacity });
+      reload(); setSuccess("Created successfully ✅");
+    } catch (err) { setError(err?.response?.data?.message); }
+    setShowModal(false);
+  };
+
+  const handleDelete = async () => {
+    try {
+      isRes ? await api.deleteResource(selected.resourceId) : await api.deleteInfrastructure(selected.infraId);
+      reload(); setSuccess("Deleted ✅");
+    } catch (err) { setError(err?.response?.data?.message); }
+    setShowModal(false);
+  };
+
+  const handleAllocate = async () => {
+    try {
+      isRes
+        ? await api.allocateResource(selected.resourceId, { allocationQuantity: +selected.allocateQty, remarks: selected.remarks })
+        : await api.updateInfrastructureCapacity(selected.infraId, { utilizedCapacity: +selected.allocateQty, remarks: selected.remarks });
+      reload(); setSuccess(isRes ? "Resource allocated ✅" : "Capacity utilized ✅");
+    } catch (err) { setError(err?.response?.data?.message); }
+    setShowModal(false);
+  };
+
+  const rows = (tab === "resources" ? resources : infra);
+
+  return (
+    <div className="container py-4">
+      <Toast msg={error} type="danger" />
+      <Toast msg={success} type="success" />
+
+      {/* Header */}
+      <div className="d-flex justify-content-between mb-3">
+        <h4 className="text-success">Resource & Infrastructure</h4>
+        <button className="btn btn-success" onClick={() => openModal({}, "add", tab)}>+ Add</button>
+      </div>
+
+      {/* Tabs */}
+      <div className="mb-3">
+        <div className="d-flex gap-3 align-items-end border-bottom pb-1">
+          {["resources", "infrastructure"].map((t) => (
+            <button key={t}
+              className={`px-3 py-2 border border-bottom-0 rounded-top ${tab === t ? "bg-light text-success fw-semibold" : "bg-transparent border-0 text-muted"}`}
+              style={{ marginBottom: -1 }}
+              onClick={() => setTab(t)}>
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="table-responsive">
+        <table className="table table-hover">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Type</th>
+              <th>{tab === "resources" ? "Quantity" : "Capacity"}</th>
+              <th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <tr key={item.resourceId || item.infraId}>
+                <td>{item.resourceId || item.infraId}</td>
+                <td>{tab === "resources" ? item.resourceName : item.infrastructureName}</td>
+                <td>{item.type}</td>
+                <td style={{ minWidth: 180 }}>
+                  {tab === "resources" ? (
+                    <>
+                      <div><b>Total:</b> {item.totalQuantity}</div>
+                      <div className="text-danger">Used: {item.totalQuantity - item.availableQuantity}</div>
+                      <div className="text-success">Available: {item.availableQuantity}</div>
+                      <div className="progress mt-1" style={{ height: 5 }}>
+                        <div className="progress-bar bg-success" style={{ width: `${((item.totalQuantity - item.availableQuantity) / item.totalQuantity) * 100}%` }} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div><b>Total:</b> {item.capacity}</div>
+                      <div className="text-danger">Used: {item.utilizedCapacity}</div>
+                      <div className="text-success">Remaining: {item.capacity - item.utilizedCapacity}</div>
+                      <div className="progress mt-1" style={{ height: 5 }}>
+                        <div className="progress-bar bg-primary" style={{ width: `${(item.utilizedCapacity / item.capacity) * 100}%` }} />
+                      </div>
+                    </>
+                  )}
+                </td>
+                <td><span className={`badge ${statusClass(item.status)}`}>{item.status}</span></td>
+                <td>
+                  <div className="d-flex gap-2">
+                    {[["view", "outline-secondary", "View"], ["allocate", "outline-primary", tab === "resources" ? "Allocate" : "Utilize"], ["delete", "outline-danger", "Delete"]].map(([m, cls, label]) => (
+                      <button key={m} className={`btn btn-${cls} btn-sm`} onClick={() => openModal(item, m, tab)}>{label}</button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modal */}
+      {showModal && (
+        <>
+          <div className="modal-backdrop show" />
+          <div className="modal d-block">
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h6>{mode.toUpperCase()}</h6>
+                  <button className="btn-close" onClick={() => setShowModal(false)} />
+                </div>
+
+                <div className="modal-body">
+                  {mode === "delete" && <p>Are you sure you want to delete?</p>}
+
+                  {mode === "add" && (
+                    <>
+                      <select className="form-control mb-2" value={selected.projectId || ""} onChange={(e) => set({ projectId: e.target.value })}>
+                        <option>Select Project</option>
+                        {projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.title}</option>)}
+                      </select>
+
+                      {isRes ? (
+                        <>
+                          <input className="form-control mb-2" placeholder="Resource Name" value={selected.resourceName || ""} onChange={(e) => set({ resourceName: e.target.value })} />
+                          <select className="form-control mb-2" value={selected.type || ""} onChange={(e) => set({ type: e.target.value })}>
+                            <option>Select Type</option>
+                            <option value="FUNDS">FUNDS</option>
+                            <option value="EQUIPMENT">EQUIPMENT</option>
+                          </select>
+                          <input className="form-control" placeholder="Quantity" value={selected.totalQuantity || ""} onChange={(e) => set({ totalQuantity: e.target.value })} />
+                        </>
+                      ) : (
+                        <>
+                          <input className="form-control mb-2" placeholder="Infrastructure Name" value={selected.infrastructureName || ""} onChange={(e) => set({ infrastructureName: e.target.value })} />
+                          <select className="form-control mb-2" value={selected.type || ""} onChange={(e) => set({ type: e.target.value })}>
+                            <option>Select Type</option>
+                            <option value="SOLAR_PLANT">SOLAR_PLANT</option>
+                            <option value="WIND_FARM">WIND_FARM</option>
+                            <option value="RECYCLING_UNIT">RECYCLING_UNIT</option>
+                          </select>
+                          <input className="form-control mb-2" placeholder="Location" value={selected.location || ""} onChange={(e) => set({ location: e.target.value })} />
+                          <input className="form-control" type="number" placeholder="Capacity" value={selected.capacity || ""} onChange={(e) => set({ capacity: e.target.value })} />
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {mode === "view" && (
+                    <div className="p-2">
+                      <h5 className="text-success mb-3">{isRes ? "Resource Details" : "Infrastructure Details"}</h5>
+
+                      <div className="border rounded p-3 mb-3 bg-light">
+                        <Field label="ID" value={selected.resourceId || selected.infraId} />
+                        <Field label="Project" value={selected.projectName} />
+                        <Field label="Name" value={selected.resourceName || selected.infrastructureName} />
+                        <Field label="Type" value={selected.type} />
+                      </div>
+
+                      <div className="border rounded p-3 mb-3">
+                        {isRes ? (
+                          <>
+                            <ProgressRow label="Total" value={selected.totalQuantity} />
+                            <ProgressRow label="Used" value={selected.totalQuantity - selected.availableQuantity} textClass="text-danger" />
+                            <ProgressRow label="Available" value={selected.availableQuantity} total={selected.totalQuantity} textClass="text-success" colorClass="bg-success" />
+                          </>
+                        ) : (
+                          <>
+                            <ProgressRow label="Total Capacity" value={selected.capacity} />
+                            <ProgressRow label="Utilized" value={selected.utilizedCapacity} textClass="text-danger" />
+                            <ProgressRow label="Remaining" value={selected.capacity - selected.utilizedCapacity} total={selected.capacity} textClass="text-success" colorClass="bg-primary" />
+                          </>
+                        )}
+                      </div>
+
+                      <div className="border rounded p-3">
+                        <div className="mb-2">
+                          <span className="text-muted">Status:</span>
+                          <span className={`badge ${statusClass(selected.status)} ms-2`}>{selected.status}</span>
+                        </div>
+                        {[["Created", selected.createdAt], ["Updated", selected.updatedAt]].map(([label, val]) => (
+                          <div key={label} className="mb-1">
+                            <span className="text-muted">{label}:</span>{" "}
+                            {val ? new Date(val).toLocaleString() : "-"}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {mode === "allocate" && (
+                    <>
+                      <input type="number" className="form-control mb-2"
+                        placeholder={isRes ? "Allocation Quantity" : "Utilized Capacity"}
+                        value={selected.allocateQty || ""}
+                        onChange={(e) => set({ allocateQty: e.target.value })} />
+                      <textarea className="form-control" rows="3" placeholder="Remarks"
+                        value={selected.remarks || ""}
+                        onChange={(e) => set({ remarks: e.target.value })} />
+                    </>
+                  )}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+                  {mode === "delete" && <button className="btn btn-danger" onClick={handleDelete}>Confirm</button>}
+                  {mode === "add" && <button className="btn btn-success" onClick={handleSave}>Save</button>}
+                  {mode === "allocate" && <button className="btn btn-primary" onClick={handleAllocate}>{isRes ? "Allocate" : "Utilize"}</button>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
